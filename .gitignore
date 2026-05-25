@@ -1,0 +1,5 @@
+.env
+.cache
+perspective.json
+__pycache__/
+*.pyc
