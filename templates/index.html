@@ -157,16 +157,30 @@ async function loadMarkets() {
                     `).join('')}
                 </div>
             </div>
-            <div class="summaries">
-                ${(d.summaries || []).map(s => `
-                    <div class="stock-summary-block">
-                        <div class="stock-summary-ticker">${s.ticker}</div>
-                        <div>${s.summary}</div>
-                    </div>
-                `).join('')}
-            </div>       `;
+            <div class="summaries" id="stock-summaries">
+                <div class="loading" style="margin-top: 16px;">Loading AI summaries...</div>
+            </div>
+        `;
+        loadSummaries();
     } catch(e) {
         document.getElementById('markets-content').innerHTML = '<div class="error">Failed to load markets</div>';
+    }
+}
+
+async function loadSummaries() {
+    try {
+        const res = await fetch('/api/stocks/summaries');
+        const d = await res.json();
+        document.getElementById('stock-summaries').innerHTML = `
+            ${(d.summaries || []).map(s => `
+                <div class="stock-summary-block">
+                    <div class="stock-summary-ticker">${s.ticker}</div>
+                    <div>${s.summary}</div>
+                </div>
+            `).join('')}
+        `;
+    } catch(e) {
+        document.getElementById('stock-summaries').innerHTML = '';
     }
 }
 
@@ -184,21 +198,13 @@ function loadNews() {
 
     source.onmessage = function(event) {
         const data = JSON.parse(event.data);
-
-        // Done signal. Close the connection
         if (data.done) {
             source.close();
             return;
         }
-
-        // Store this category
         rendered[data.category] = data.stories;
-
-        // Update loading message to show next category
         const nextIndex = categoryOrder.indexOf(data.category) + 1;
         const nextCat = categoryOrder[nextIndex];
-
-        // Re-render all received categories in correct order
         const html = categoryOrder
             .filter(cat => rendered[cat])
             .map(cat => `
@@ -213,12 +219,9 @@ function loadNews() {
                     `).join('')}
                 </div>
             `).join('');
-
-        // Add loading indicator for next category if not done
         const loadingHtml = nextCat
             ? `<div class="loading" style="margin-top: 16px;">Loading ${nextCat}...</div>`
             : '';
-
         container.innerHTML = html + loadingHtml;
     };
 
@@ -227,7 +230,6 @@ function loadNews() {
         if (Object.keys(rendered).length === 0) {
             container.innerHTML = '<div class="error">Failed to load news</div>';
         }
-        // If we have some categories already, just stop and show what we have
     };
 }
 
@@ -265,7 +267,6 @@ function loadHeader() {
     document.getElementById('header-date').textContent = dateStr;
 }
 
-// Load weather and markets first, news and perspective in parallel after
 loadWeather();
 loadMarkets();
 loadNews();

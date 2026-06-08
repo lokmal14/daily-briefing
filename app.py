@@ -431,7 +431,6 @@ def stocks():
         except:
             return None
 
-    # Use a subset of most-watched tickers for reliability on free tier
     WATCH_LIST = TICKERS[:100]
     with ThreadPoolExecutor(max_workers=10) as executor:
         results = list(executor.map(fetch_stock, WATCH_LIST))
@@ -457,6 +456,46 @@ def stocks():
             }
         except:
             spy = None
+
+    return jsonify({
+        "market_status": market_status,
+        "market_message": market_message,
+        "spy": spy,
+        "gainers": gainers,
+        "losers": losers
+    })
+
+
+@app.route("/api/stocks/summaries")
+def stock_summaries():
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    warnings.filterwarnings("ignore")
+
+    def fetch_stock(ticker):
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.fast_info
+            price = round(info.last_price, 2)
+            prev = round(info.previous_close, 2)
+            change = round(price - prev, 2)
+            pct = round((change / prev) * 100, 2)
+            high_52 = round(info.year_high, 2)
+            low_52 = round(info.year_low, 2)
+            return {"ticker": ticker, "price": price, "change": change, "pct": pct, "high_52": high_52, "low_52": low_52}
+        except:
+            return None
+
+    WATCH_LIST = TICKERS[:100]
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(executor.map(fetch_stock, WATCH_LIST))
+
+    all_stocks = [r for r in results if r is not None]
+    all_stocks.sort(key=lambda x: x["pct"], reverse=True)
+
+    gainers = all_stocks[:5]
+    losers = all_stocks[-5:][::-1]
+
+    spy = next((s for s in all_stocks if s["ticker"] == "SPY"), None)
 
     def stock_line(s):
         direction = "up" if s["change"] >= 0 else "down"
@@ -488,14 +527,7 @@ def stocks():
     except:
         summaries_data = []
 
-    return jsonify({
-        "market_status": market_status,
-        "market_message": market_message,
-        "spy": spy,
-        "gainers": gainers,
-        "losers": losers,
-        "summaries": summaries_data
-    })
+    return jsonify({"summaries": summaries_data})
 
 if __name__ == "__main__":
     app.run(debug=True)
