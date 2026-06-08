@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 import requests
 import os
 from dotenv import load_dotenv
@@ -132,6 +132,7 @@ def weather():
 def perspective():
     PERSPECTIVE_FILE = "perspective.json"
     today = str(date.today())
+    force = request.args.get("refresh") == "true"
 
     def generate():
         import random
@@ -141,21 +142,22 @@ def perspective():
             messages=[{
                 "role": "user",
                 "content": (
-                    f"[seed:{seed}] Give me one sharp, unexpected observation about human behavior, "
-                    f"society, or how the world actually works. Under 15 words. "
-                    f"No motivational tone. No life advice. No quotes. "
-                    f"It should feel like something you'd only realize after years of paying attention. "
+                    f"[seed:{seed}] Give me one sharp observation about human behavior that anyone would immediately understand and recognize as true. "
+                    f"Must be under 15 words. "
+                    f"Write it like something you'd read and immediately think 'that's so true'. "
+                    f"No metaphors. No abstract concepts. No references to specific relationships like in-laws or coworkers. "
+                    f"Just a direct, clear truth about how people think or behave. "
+                    f"Examples of the RIGHT style: 'People work harder to avoid loss than to achieve gain.' or 'Most people would rather be comfortable than right.' "
                     f"Make it different every time."
                 )
             }]
         )
-        
         return chat.choices[0].message.content
 
     try:
         with open(PERSPECTIVE_FILE, "r") as f:
             saved = json.load(f)
-        if saved["date"] == today:
+        if saved["date"] == today and not force:
             text = saved["perspective"]
         else:
             text = generate()
@@ -449,7 +451,7 @@ def stocks():
         except:
             return None
 
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         results = list(executor.map(fetch_stock, TICKERS))
 
     all_stocks = [r for r in results if r is not None]
