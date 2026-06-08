@@ -130,44 +130,24 @@ def weather():
 
 @app.route("/api/perspective")
 def perspective():
-    PERSPECTIVE_FILE = "perspective.json"
-    today = str(date.today())
-    force = request.args.get("refresh") == "true"
-
-    def generate():
-        import random
-        seed = random.randint(1, 99999)
-        chat = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"[seed:{seed}] Give me one sharp observation about human behavior that anyone would immediately understand and recognize as true. "
-                    f"Must be under 15 words. "
-                    f"Write it like something you'd read and immediately think 'that's so true'. "
-                    f"No metaphors. No abstract concepts. No references to specific relationships like in-laws or coworkers. "
-                    f"Just a direct, clear truth about how people think or behave. "
-                    f"Examples of the RIGHT style: 'People work harder to avoid loss than to achieve gain.' or 'Most people would rather be comfortable than right.' "
-                    f"Make it different every time."
-                )
-            }]
-        )
-        return chat.choices[0].message.content
-
-    try:
-        with open(PERSPECTIVE_FILE, "r") as f:
-            saved = json.load(f)
-        if saved["date"] == today and not force:
-            text = saved["perspective"]
-        else:
-            text = generate()
-            with open(PERSPECTIVE_FILE, "w") as f:
-                json.dump({"date": today, "perspective": text}, f)
-    except:
-        text = generate()
-        with open(PERSPECTIVE_FILE, "w") as f:
-            json.dump({"date": today, "perspective": text}, f)
-
+    import random
+    seed = random.randint(1, 99999)
+    chat = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{
+            "role": "user",
+            "content": (
+                f"[seed:{seed}] Give me one sharp observation about human behavior that anyone would immediately understand and recognize as true. "
+                f"Must be under 15 words. "
+                f"Write it like something you'd read and immediately think 'that's so true'. "
+                f"No metaphors. No abstract concepts. No references to specific relationships like in-laws or coworkers. "
+                f"Just a direct, clear truth about how people think or behave. "
+                f"Examples of the RIGHT style: 'People work harder to avoid loss than to achieve gain.' or 'Most people would rather be comfortable than right.' "
+                f"Make it different every time."
+            )
+        }]
+    )
+    text = chat.choices[0].message.content
     return jsonify({"perspective": text})
 
 @app.route("/api/news")
@@ -451,8 +431,10 @@ def stocks():
         except:
             return None
 
+    # Use a subset of most-watched tickers for reliability on free tier
+    WATCH_LIST = TICKERS[:100]
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = list(executor.map(fetch_stock, TICKERS))
+        results = list(executor.map(fetch_stock, WATCH_LIST))
 
     all_stocks = [r for r in results if r is not None]
     all_stocks.sort(key=lambda x: x["pct"], reverse=True)
