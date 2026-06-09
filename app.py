@@ -23,7 +23,7 @@ app = Flask(__name__)
 
 W_KEY = os.getenv("W_KEY")
 GROQ_KEY = os.getenv("GROQ_KEY")
-client = Groq(api_key=GROQ_KEY)
+client = Groq(api_key=GROQ_KEY, max_retries=0)
 
 @app.route("/")
 def index():
