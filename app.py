@@ -13,7 +13,7 @@ import pytz
 import yfinance as yf
 import warnings
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tickers import TICKERS
 from flask import Response, stream_with_context
 
@@ -137,13 +137,17 @@ def perspective():
         messages=[{
             "role": "user",
             "content": (
-                f"[seed:{seed}] Give me one sharp observation about human behavior that anyone would immediately understand and recognize as true. "
-                f"Must be under 15 words. "
+                f"[seed:{seed}] Give me one sharp observation about human behavior that anyone would immediately recognize as true. "
+                f"Must be under 15 words. No metaphors. No abstract concepts. "
                 f"Write it like something you'd read and immediately think 'that's so true'. "
-                f"No metaphors. No abstract concepts. No references to specific relationships like in-laws or coworkers. "
-                f"Just a direct, clear truth about how people think or behave. "
-                f"Examples of the RIGHT style: 'People work harder to avoid loss than to achieve gain.' or 'Most people would rather be comfortable than right.' "
-                f"Make it different every time."
+                f"Avoid these overused themes: loss aversion, negativity bias, criticism, failure, avoidance, comfort zones. "
+                f"Draw from a wide range: how people seek status, how they change their minds, how they treat time, "
+                f"how they behave in groups, how they make decisions, how they present themselves. "
+                f"Examples of the RIGHT style: "
+                f"'Most people make decisions first and find reasons second.' "
+                f"'People are more honest with strangers than with close friends.' "
+                f"'Everyone thinks they are less biased than they actually are.' "
+                f"Never repeat a theme. Make it genuinely different every time."
             )
         }]
     )
@@ -157,7 +161,7 @@ def news():
     CITY = "Cary"
     STATE = "North Carolina"
 
-    def fetch_feed(url, max_items=15):
+    def fetch_feed(url, max_items=5):
         feed = feedparser.parse(url)
         results = []
         for entry in feed.entries[:max_items]:
@@ -274,7 +278,7 @@ def news_stream():
     CITY = "Cary"
     STATE = "North Carolina"
 
-    def fetch_feed(url, max_items=15):
+    def fetch_feed(url, max_items=5):
         feed = feedparser.parse(url)
         results = []
         for entry in feed.entries[:max_items]:
@@ -344,12 +348,12 @@ def news_stream():
     }
 
     def generate():
-        for cat_name, query in category_queries.items():
+        def process_one(cat_name):
+            query = category_queries[cat_name]
             try:
                 headlines = fetch_feed(
                     f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
                 )
-
                 prompt = (
                     f"You are a news editor. Below are headlines for the {cat_name} category. "
                     f"{filters[cat_name]} "
@@ -359,27 +363,24 @@ def news_stream():
                     f"Return ONLY the JSON array, nothing else.\n\n"
                     f"Headlines:\n" + "\n".join(headlines)
                 )
-
                 chat = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}]
                 )
-
                 try:
                     stories = json.loads(chat.choices[0].message.content)
                 except:
                     stories = []
-
-                # Send this category immediately as an SSE event
-                data = json.dumps({"category": cat_name, "stories": stories})
-                yield f"data: {data}\n\n"
-
+                return {"category": cat_name, "stories": stories}
             except Exception as e:
-                yield f"data: {json.dumps({'category': cat_name, 'stories': [], 'error': str(e)})}\n\n"
+                return {"category": cat_name, "stories": [], "error": str(e)}
 
-            time.sleep(0.5)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            futures = {executor.submit(process_one, cat): cat for cat in category_queries}
+            for future in as_completed(futures):
+                result = future.result()
+                yield f"data: {json.dumps(result)}\n\n"
 
-        # Send a done signal so the browser knows streaming is complete
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     return Response(

@@ -70,6 +70,11 @@
         <div id="weather-content" class="loading">Loading weather...</div>
     </div>
 
+    <div class="section" id="perspective-section">
+        <h2>Today's Perspective</h2>
+        <div id="perspective-content" class="loading">Loading...</div>
+    </div>
+
     <div class="section" id="markets-section">
         <h2>Markets</h2>
         <div id="markets-content" class="loading">Loading markets...</div>
@@ -78,11 +83,6 @@
     <div class="section" id="news-section">
         <h2>News</h2>
         <div id="news-content" class="loading">Loading news...</div>
-    </div>
-
-    <div class="section" id="perspective-section">
-        <h2>Today's Perspective</h2>
-        <div id="perspective-content" class="loading">Loading...</div>
     </div>
 
 <script>
@@ -200,11 +200,23 @@ function loadNews() {
         const data = JSON.parse(event.data);
         if (data.done) {
             source.close();
+            container.innerHTML = categoryOrder
+                .filter(cat => rendered[cat])
+                .map(cat => `
+                    <div class="news-category">
+                        <div class="news-category-label">${cat}</div>
+                        ${rendered[cat].map(s => `
+                            <div class="news-story">
+                                <div class="news-headline">${s.headline}</div>
+                                <div class="news-why">${s.why}</div>
+                                <div class="news-date">${s.date}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `).join('');
             return;
         }
         rendered[data.category] = data.stories;
-        const nextIndex = categoryOrder.indexOf(data.category) + 1;
-        const nextCat = categoryOrder[nextIndex];
         const html = categoryOrder
             .filter(cat => rendered[cat])
             .map(cat => `
@@ -219,8 +231,9 @@ function loadNews() {
                     `).join('')}
                 </div>
             `).join('');
-        const loadingHtml = nextCat
-            ? `<div class="loading" style="margin-top: 16px;">Loading ${nextCat}...</div>`
+        const pending = categoryOrder.filter(cat => !rendered[cat]);
+        const loadingHtml = pending.length > 0
+            ? `<div class="loading" style="margin-top: 16px;">Loading ${pending.join(', ')}...</div>`
             : '';
         container.innerHTML = html + loadingHtml;
     };
