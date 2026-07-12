@@ -2,7 +2,7 @@ from flask import Flask, jsonify, render_template, request
 import requests
 import os
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 import json
 from datetime import date
 import feedparser
@@ -21,9 +21,26 @@ load_dotenv()
 
 app = Flask(__name__)
 
-W_KEY = os.getenv("W_KEY")
 GROQ_KEY = os.getenv("GROQ_KEY")
-client = Groq(api_key=GROQ_KEY, max_retries=0)
+client = OpenAI(
+    api_key=GROQ_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
+
+def geocode_city(city, state=""):
+    try:
+        query = f"{city} {state}".strip()
+        r = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": query, "count": 1, "language": "en", "format": "json"},
+            timeout=10
+        )
+        results = r.json().get("results", [])
+        if results:
+            return results[0]["latitude"], results[0]["longitude"], results[0].get("country_code", "US")
+        return 35.7915, -78.7811, "US"
+    except:
+        return 35.7915, -78.7811, "US"
 
 @app.route("/")
 def index():
@@ -33,14 +50,21 @@ def index():
 def weather():
     location_response = requests.get("https://ipinfo.io/json")
     location_data = location_response.json()
-    COUNTRY = location_data.get("country", "US").upper()
 
-    # Default location: Cary, NC
-    # When city search is built, these get replaced dynamically
-    CITY = "Cary"
+    city_param = request.args.get("city", "")
+    state_param = request.args.get("state", "")
+
+    if city_param:
+        lat, lon, country_code = geocode_city(city_param, state_param)
+        CITY = city_param
+        COUNTRY = country_code.upper()
+    else:
+        CITY = "Cary"
+        lat = 35.7915
+        lon = -78.7811
+        COUNTRY = location_data.get("country", "US").upper()
+
     POSTAL = "27519"
-    lat = 35.7915
-    lon = -78.7811
 
     if COUNTRY == "US":
         from noaa_sdk import NOAA
@@ -70,7 +94,7 @@ def weather():
                 "low": night_period["temperature"],
                 "desc": day_period["shortForecast"],
                 "rain": day_period.get("probabilityOfPrecipitation", {}).get("value", 0) or 0
-            })  
+            })
 
     else:
         from openmeteo_requests import Client as OMClient
@@ -128,31 +152,312 @@ def weather():
         "forecast": forecast_days
     })
 
+LOCAL_TEAMS = {
+    "NC": ["carolina hurricanes", "carolina panthers", "charlotte hornets", "nc state", "duke", "tar heel", "unc"],
+    "NY": ["yankees", "mets", "knicks", "nets", "giants", "jets", "rangers", "islanders", "buffalo bills", "sabres"],
+    "CA": ["lakers", "clippers", "warriors", "dodgers", "padres", "giants", "49ers", "rams", "chargers", "kings", "ducks", "angels", "athletics"],
+    "TX": ["dallas cowboys", "texans", "rangers", "astros", "mavericks", "rockets", "spurs", "stars", "fc dallas"],
+    "FL": ["miami heat", "magic", "marlins", "rays", "buccaneers", "dolphins", "jaguars", "inter miami"],
+    "IL": ["bulls", "cubs", "white sox", "bears", "blackhawks"],
+    "MA": ["celtics", "red sox", "patriots", "bruins"],
+    "PA": ["eagles", "phillies", "sixers", "flyers", "steelers", "pirates", "penguins"],
+    "OH": ["cavaliers", "browns", "guardians", "bengals", "reds", "blue jackets"],
+    "WA": ["seahawks", "mariners", "kraken", "sounders"],
+    "GA": ["hawks", "braves", "falcons", "atlanta united"],
+    "AZ": ["suns", "cardinals", "diamondbacks"],
+    "CO": ["nuggets", "avalanche", "broncos", "rockies"],
+    "MI": ["pistons", "red wings", "lions", "tigers"],
+    "MN": ["timberwolves", "wild", "vikings", "twins"],
+    "NV": ["raiders", "golden knights", "aces", "vegas"],
+    "TN": ["titans", "predators", "grizzlies"],
+    "IN": ["pacers", "colts"],
+    "MO": ["blues", "cardinals", "chiefs", "royals"],
+    "WI": ["bucks", "packers", "brewers"],
+    "VA": ["commanders", "capitals", "wizards", "nationals"],
+    "MD": ["ravens", "orioles"],
+    "DC": ["commanders", "capitals", "wizards", "nationals"],
+    "UT": ["jazz"],
+    "OK": ["thunder"],
+    "LA": ["pelicans", "saints"],
+    "OR": ["trail blazers", "timbers"],
+    "SC": ["carolina panthers", "carolina hurricanes"],
+    "KY": ["louisville", "kentucky"],
+    "AL": ["alabama", "auburn"],
+}
+
+NATIONAL_FAVORITES = [
+    "dallas cowboys", "new england patriots", "kansas city chiefs",
+    "green bay packers", "pittsburgh steelers", "san francisco 49ers",
+    "los angeles lakers", "boston celtics", "golden state warriors",
+    "chicago bulls", "miami heat", "new york knicks",
+    "new york yankees", "los angeles dodgers", "boston red sox",
+    "chicago cubs", "atlanta braves",
+    "toronto maple leafs", "montreal canadiens",
+]
+
+ALWAYS_CHECK = [
+    ("basketball", "nba"),
+    ("football", "nfl"),
+    ("baseball", "mlb"),
+    ("hockey", "nhl"),
+    ("soccer", "fifa.world"),
+    ("soccer", "usa.1"),
+    ("racing", "f1"),
+    ("basketball", "mens-college-basketball"),
+]
+
 @app.route("/api/perspective")
 def perspective():
-    import random
-    seed = random.randint(1, 99999)
-    chat = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{
-            "role": "user",
-            "content": (
-                f"[seed:{seed}] Give me one sharp observation about human behavior that anyone would immediately recognize as true. "
-                f"Must be under 15 words. No metaphors. No abstract concepts. "
-                f"Write it like something you'd read and immediately think 'that's so true'. "
-                f"Avoid these overused themes: loss aversion, negativity bias, criticism, failure, avoidance, comfort zones. "
-                f"Draw from a wide range: how people seek status, how they change their minds, how they treat time, "
-                f"how they behave in groups, how they make decisions, how they present themselves. "
-                f"Examples of the RIGHT style: "
-                f"'Most people make decisions first and find reasons second.' "
-                f"'People are more honest with strangers than with close friends.' "
-                f"'Everyone thinks they are less biased than they actually are.' "
-                f"Never repeat a theme. Make it genuinely different every time."
-            )
-        }]
+    city = request.args.get("city", "Cary")
+    state = request.args.get("state", "NC")
+
+    eastern = pytz.timezone("US/Eastern")
+    now_et = datetime.now(eastern)
+    hour = now_et.hour
+    time_of_day = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
+
+    context_parts = []
+
+    # 1. Weather
+    try:
+        lat, lon, _ = geocode_city(city, state)
+        from openmeteo_requests import Client as OMClient
+        import requests_cache
+        from retry_requests import retry
+        cache_session = requests_cache.CachedSession('.cache', expire_after=1800)
+        retry_session = retry(cache_session, retries=2, backoff_factor=0.2)
+        om = OMClient(session=retry_session)
+        om_params = {
+            "latitude": lat, "longitude": lon,
+            "current": ["temperature_2m", "weather_code", "precipitation_probability"],
+            "temperature_unit": "fahrenheit", "timezone": "auto"
+        }
+        om_resp = om.weather_api("https://api.open-meteo.com/v1/forecast", params=om_params)
+        cur = om_resp[0].Current()
+        temp = round(cur.Variables(0).Value(), 1)
+        wmo = {0:"clear skies", 1:"mostly clear", 2:"partly cloudy", 3:"overcast",
+               45:"foggy", 51:"light drizzle", 61:"light rain", 63:"rain",
+               65:"heavy rain", 71:"light snow", 73:"snow", 80:"rain showers", 95:"thunderstorms"}
+        desc = wmo.get(int(cur.Variables(1).Value()), "")
+        rain = round(cur.Variables(2).Value())
+        wx = f"{temp}°F and {desc}"
+        if rain > 50:
+            wx += f" with {rain}% chance of rain"
+        context_parts.append(f"Weather in {city}: {wx}")
+    except:
+        pass
+
+    # 2. Markets
+    try:
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+        warnings.filterwarnings("ignore")
+        spy_info = yf.Ticker("SPY").fast_info
+        spy_pct = round((spy_info.last_price - spy_info.previous_close) / spy_info.previous_close * 100, 2)
+
+        def qfetch(ticker):
+            try:
+                info = yf.Ticker(ticker).fast_info
+                pct = round((info.last_price - info.previous_close) / info.previous_close * 100, 2)
+                return {"ticker": ticker, "pct": pct}
+            except:
+                return None
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            movers = [r for r in ex.map(qfetch, TICKERS[:40]) if r]
+        movers.sort(key=lambda x: abs(x["pct"]), reverse=True)
+
+        if now_et.weekday() >= 5:
+            mkt = f"markets closed for the weekend, SPY ended {'+' if spy_pct >= 0 else ''}{spy_pct}% Friday"
+        elif hour >= 16:
+            mkt = f"markets closed, SPY finished {'+' if spy_pct >= 0 else ''}{spy_pct}%"
+        elif hour < 9 or (hour == 9 and now_et.minute < 30):
+            mkt = f"markets not open yet, SPY was {'+' if spy_pct >= 0 else ''}{spy_pct}% yesterday"
+        else:
+            mkt = f"markets open, SPY {'+' if spy_pct >= 0 else ''}{spy_pct}%"
+
+        if movers and abs(movers[0]["pct"]) > 4:
+            mkt += f", {movers[0]['ticker']} {'+' if movers[0]['pct'] >= 0 else ''}{movers[0]['pct']}%"
+        context_parts.append(f"Markets: {mkt}")
+    except:
+        pass
+
+    # 3. Headlines — always include World Cup search since ESPN endpoint may be unreliable
+    try:
+        gq = urllib.parse.quote("major news today 2026")
+        lq = urllib.parse.quote(f"{city} {state} news today")
+        wcq = urllib.parse.quote("FIFA World Cup 2026 today results score")
+        g_feed = feedparser.parse(f"https://news.google.com/rss/search?q={gq}&hl=en-US&gl=US&ceid=US:en")
+        l_feed = feedparser.parse(f"https://news.google.com/rss/search?q={lq}&hl=en-US&gl=US&ceid=US:en")
+        wc_feed = feedparser.parse(f"https://news.google.com/rss/search?q={wcq}&hl=en-US&gl=US&ceid=US:en")
+        heads = [e.title for e in g_feed.entries[:2]] + [e.title for e in l_feed.entries[:1]]
+        wc_heads = [e.title for e in wc_feed.entries[:2]]
+        if wc_heads:
+            context_parts.append(f"FIFA World Cup 2026 headlines: {'; '.join(wc_heads)}")
+        if heads:
+            context_parts.append(f"Top headlines: {'; '.join(heads)}")
+    except:
+        pass
+
+    # 4. Sports — check all major leagues, tag by significance and local relevance
+    local_keywords = [kw.lower() for kw in LOCAL_TEAMS.get(state.upper(), [])]
+    sports_lines = []
+
+    for sport, slug in ALWAYS_CHECK:
+        try:
+            data = requests.get(
+                f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{slug}/scoreboard",
+                timeout=5
+            ).json()
+            for ev in data.get("events", [])[:4]:
+                comp = ev.get("competitions", [{}])[0]
+                teams = comp.get("competitors", [])
+                if len(teams) < 2:
+                    continue
+                home = next((t for t in teams if t.get("homeAway") == "home"), teams[0])
+                away = next((t for t in teams if t.get("homeAway") == "away"), teams[1])
+                home_name = home.get("team", {}).get("displayName", "")
+                away_name = away.get("team", {}).get("displayName", "")
+                home_score = home.get("score", "")
+                away_score = away.get("score", "")
+                detail = ev.get("status", {}).get("type", {}).get("shortDetail", "")
+                season_type = comp.get("type", {}).get("abbreviation", "")
+                notes = comp.get("notes", [])
+                note = notes[0].get("headline", "") if notes else ""
+                event_text = (ev.get("name", "") + " " + note).lower()
+                home_record = home.get("records", [{}])[0].get("summary", "") if home.get("records") else ""
+                away_record = away.get("records", [{}])[0].get("summary", "") if away.get("records") else ""
+                score_str = f"{away_score}-{home_score}" if home_score and away_score else "upcoming"
+                record_str = f"({away_record} vs {home_record})" if home_record and away_record else ""
+
+                is_world_cup = slug == "fifa.world" or "world cup" in event_text or "fifa" in event_text
+                is_finals = is_world_cup or any(w in event_text for w in ["finals", "championship", "world series", "super bowl"])
+                is_playoff = season_type == "POST" or any(w in event_text for w in ["playoff", "semifinal", "quarterfinal", "wild card", "conference"])
+                is_local = any(kw in home_name.lower() or kw in away_name.lower() for kw in local_keywords)
+                is_national = any(kw in home_name.lower() or kw in away_name.lower() for kw in NATIONAL_FAVORITES)
+
+                if not (is_finals or is_playoff or is_local or is_national):
+                    continue
+
+                if is_finals:
+                    tag = "[FINALS]"
+                elif is_playoff:
+                    tag = "[PLAYOFF]"
+                elif is_local:
+                    tag = "[LOCAL]"
+                else:
+                    tag = "[POPULAR]"
+
+                line = f"{tag} {note or slug.upper()}: {away_name} vs {home_name} {score_str} {record_str} ({detail})"
+                sports_lines.append(line)
+        except:
+            pass
+
+    if sports_lines:
+        context_parts.append("Sports today:\n" + "\n".join(sports_lines[:8]))
+
+    context = "\n".join(context_parts) if context_parts else "No live data available."
+
+    prompt = (
+        f"Give someone in {city}, {state} their {time_of_day} read. "
+        f"Data:\n\n{context}\n\n"
+        f"RULES: Exactly 2 sentences. Not 3. If you write 3, delete the last one. "
+        f"Pick the 2 most important things total — ignore everything else completely. "
+        f"Priority: FIFA World Cup > [FINALS] > [PLAYOFF] > [LOCAL] > big news > markets > weather. "
+        f"World Cup is the biggest sporting event on earth right now — if there are games today, lead with it. "
+        f"Use real details: teams, scores, series standing. Not generic phrases like 'sports fans are eagerly awaiting'. "
+        f"No filler. No 'meanwhile'. No questions. No emojis. "
+        f"GOOD: 'France beat Spain 2-1 to reach the World Cup final — Argentina waits for them Sunday. Knicks tied the NBA Finals 3-3, Game 7 Tuesday.' "
+        f"BAD: 'The NBA Finals are headed to Game 6, and sports fans are eagerly awaiting tonight\\'s games.'"
     )
-    text = chat.choices[0].message.content
-    return jsonify({"perspective": text})
+
+    chat = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return jsonify({
+        "perspective": chat.choices[0].message.content.strip(),
+        "context": context
+    })
+
+@app.route("/api/chat", methods=["POST"])
+def chat_endpoint():
+    data = request.json
+    message = data.get("message", "").strip()
+    context = data.get("context", "")
+    history = data.get("history", [])
+    city = data.get("city", "Cary")
+    state = data.get("state", "NC")
+
+    if not message:
+        return jsonify({"response": ""}), 400
+
+    extra_context = ""
+    try:
+        search_q = urllib.parse.quote(f"{message} {city} {state}")
+        general_q = urllib.parse.quote(f"{message} 2026")
+        local_feed = feedparser.parse(
+            f"https://news.google.com/rss/search?q={search_q}&hl=en-US&gl=US&ceid=US:en"
+        )
+        general_feed = feedparser.parse(
+            f"https://news.google.com/rss/search?q={general_q}&hl=en-US&gl=US&ceid=US:en"
+        )
+
+        entries = local_feed.entries[:2] + general_feed.entries[:2]
+        articles = []
+
+        for entry in entries[:4]:
+            title = entry.title
+            pub = entry.get("published", "")
+            try:
+                raw_url = entry.get("link", "")
+                redirect = requests.get(raw_url, timeout=5, allow_redirects=True)
+                real_url = redirect.url
+                article_resp = requests.get(real_url, timeout=6, headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"
+                })
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(article_resp.text, "html.parser")
+                for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+                    tag.decompose()
+                paragraphs = [p.get_text().strip() for p in soup.find_all("p") if len(p.get_text().strip()) > 60]
+                article_text = " ".join(paragraphs[:8])[:1500]
+                if article_text:
+                    articles.append(f"SOURCE: {title} ({pub})\n{article_text}")
+                else:
+                    articles.append(f"{title} ({pub}): {entry.get('summary','')[:400]}")
+            except:
+                articles.append(f"{title} ({pub}): {entry.get('summary','')[:400]}")
+
+        if articles:
+            extra_context = "\n\nFull article content retrieved for this question:\n\n" + "\n\n---\n\n".join(articles)
+    except:
+        pass
+
+    messages = [{
+        "role": "system",
+        "content": (
+            f"You are a sharp daily briefing assistant for someone in {city}, {state}. "
+            f"You have two sources — use both:\n\n"
+            f"1. Today's briefing data:\n{context}\n\n"
+            f"2. Full article content pulled live for this question:{extra_context}\n\n"
+            f"Answer using specific details from the articles above. "
+            f"Names, dates, scores, quotes — use whatever is in there. "
+            f"Be direct and conversational. 2-3 sentences unless they ask for more. No emojis."
+        )
+    }]
+
+    for h in history[-10:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+
+    messages.append({"role": "user", "content": message})
+
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages,
+        max_tokens=500
+    )
+
+    return jsonify({"response": response.choices[0].message.content.strip()})
 
 @app.route("/api/news")
 def news():
@@ -181,9 +486,7 @@ def news():
 
     world_query    = urllib.parse.quote("world news today")
     us_query       = urllib.parse.quote("US news today")
-
-    business_query = urllib.parse.quote(f"business finance economy stock market {datetime.now().strftime('%B %Y')}")    
-    
+    business_query = urllib.parse.quote(f"business finance economy stock market {datetime.now().strftime('%B %Y')}")
     tech_query     = urllib.parse.quote("technology AI news today")
     sports_query   = urllib.parse.quote("sports news today")
     global_query   = urllib.parse.quote("global crisis war pandemic major world event 2026")
@@ -203,44 +506,14 @@ def news():
 
     def process_category(cat_name, headlines):
         filters = {
-            "GLOBAL IMPACT": (
-                "Identify the 3 biggest ongoing world situations right now that affect millions of people. "
-                "Wars, economic crises, pandemics, major political shifts. "
-                "For each find the most recent update. Skip one-day stories with no ongoing impact."
-            ),
-            "WORLD": (
-                "Pick the 3 most important international stories that people worldwide should know about. "
-                "Focus on events that have real consequences for countries and their people."
-            ),
-            "US": (
-                "Pick the 3 most important US stories that directly affect Americans. "
-                "Focus on policy, economy, major events, and anything that changes daily life."
-            ),
-            "BUSINESS": (
-                "Pick the 3 most important business and finance stories for someone who wants to understand the economy. "
-                "Focus on market moves, major company news, and economic policy."
-            ),
-            "TECH": (
-                "Pick the 3 most important technology stories that affect how people live and work. "
-                "Focus on AI developments, major product launches, and tech policy."
-            ),
-            "SPORTS": (
-                "Pick the 3 most relevant sports stories across major leagues. "
-                "Focus on game results, standings, trades, and major sports events happening now."
-            ),
-            "STATE": (
-                "Pick the 3 most important North Carolina stories that directly affect residents. "
-                "Only include: public safety, infrastructure, economy, crime, policy, weather. "
-                "Prioritize stories from the last 7 days. Skip anything older than 2 weeks unless it has major ongoing impact today. "
-                "Skip awards, feel-good stories, and anything that doesn't affect people's daily lives."
-            ),
-            "CITY": (
-                "Pick the 3 most important local stories that directly affect residents of this city. "
-                "Only include: public safety, infrastructure, local economy, crime, policy, weather. "
-                "Prioritize stories from the last 7 days. If a story is older than 2 weeks only include it if it has major ongoing impact. "
-                "The train crash from May 6 is old news -- skip it unless there is a direct ongoing impact today. "
-                "Skip awards, feel-good stories, and anything that doesn't affect people's daily lives."
-            ),
+            "GLOBAL IMPACT": "Identify the 3 biggest ongoing world situations right now that affect millions of people. Wars, economic crises, pandemics, major political shifts. For each find the most recent update. Skip one-day stories with no ongoing impact.",
+            "WORLD": "Pick the 3 most important international stories that people worldwide should know about. Focus on events that have real consequences for countries and their people.",
+            "US": "Pick the 3 most important US stories that directly affect Americans. Focus on policy, economy, major events, and anything that changes daily life.",
+            "BUSINESS": "Pick the 3 most important business and finance stories for someone who wants to understand the economy. Focus on market moves, major company news, and economic policy.",
+            "TECH": "Pick the 3 most important technology stories that affect how people live and work. Focus on AI developments, major product launches, and tech policy.",
+            "SPORTS": "Pick the 3 most relevant sports stories across major leagues. Focus on game results, standings, trades, and major sports events happening now.",
+            "STATE": "Pick the 3 most important North Carolina stories that directly affect residents. Only include: public safety, infrastructure, economy, crime, policy, weather. Prioritize stories from the last 7 days. Skip anything older than 2 weeks unless it has major ongoing impact today. Skip awards, feel-good stories, and anything that doesn't affect people's daily lives.",
+            "CITY": "Pick the 3 most important local stories that directly affect residents of this city. Only include: public safety, infrastructure, local economy, crime, policy, weather. Prioritize stories from the last 7 days. If a story is older than 2 weeks only include it if it has major ongoing impact. Skip awards, feel-good stories, and anything that doesn't affect people's daily lives.",
         }
 
         prompt = (
@@ -254,7 +527,7 @@ def news():
         )
 
         chat = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}]
         )
 
@@ -275,8 +548,8 @@ def news():
 def news_stream():
     location_response = requests.get("https://ipinfo.io/json")
     location_data = location_response.json()
-    CITY = "Cary"
-    STATE = "North Carolina"
+    CITY = request.args.get("city", "Cary")
+    STATE = request.args.get("state", "North Carolina")
 
     def fetch_feed(url, max_items=5):
         feed = feedparser.parse(url)
@@ -297,43 +570,14 @@ def news_stream():
         return results
 
     filters = {
-        "GLOBAL IMPACT": (
-            "Identify the 3 biggest ongoing world situations right now that affect millions of people. "
-            "Wars, economic crises, pandemics, major political shifts. "
-            "For each find the most recent update. Skip one-day stories with no ongoing impact."
-        ),
-        "WORLD": (
-            "Pick the 3 most important international stories that people worldwide should know about. "
-            "Focus on events that have real consequences for countries and their people."
-        ),
-        "US": (
-            "Pick the 3 most important US stories that directly affect Americans. "
-            "Focus on policy, economy, major events, and anything that changes daily life."
-        ),
-        "BUSINESS": (
-            "Pick the 3 most important business and finance stories for someone who wants to understand the economy. "
-            "Focus on market moves, major company news, and economic policy."
-        ),
-        "TECH": (
-            "Pick the 3 most important technology stories that affect how people live and work. "
-            "Focus on AI developments, major product launches, and tech policy."
-        ),
-        "SPORTS": (
-            "Pick the 3 most relevant sports stories across major leagues. "
-            "Focus on game results, standings, trades, and major sports events happening now."
-        ),
-        "STATE": (
-            "Pick the 3 most important North Carolina stories that directly affect residents. "
-            "Only include: public safety, infrastructure, economy, crime, policy, weather. "
-            "Prioritize stories from the last 7 days. Skip anything older than 2 weeks unless it has major ongoing impact today. "
-            "Skip awards, feel-good stories, and anything that doesn't affect people's daily lives."
-        ),
-        "CITY": (
-            "Pick the 3 most important local stories that directly affect residents of Cary NC. "
-            "Only include: public safety, infrastructure, local economy, crime, policy, weather. "
-            "Prioritize stories from the last 7 days. Skip anything older than 2 weeks. "
-            "Skip awards, feel-good stories, and anything that doesn't affect people's daily lives."
-        ),
+        "GLOBAL IMPACT": "Identify the 3 biggest ongoing world situations right now that affect millions of people. Wars, economic crises, pandemics, major political shifts. For each find the most recent update. Skip one-day stories with no ongoing impact.",
+        "WORLD": "Pick the 3 most important international stories that people worldwide should know about. Focus on events that have real consequences for countries and their people.",
+        "US": "Pick the 3 most important US stories that directly affect Americans. Focus on policy, economy, major events, and anything that changes daily life.",
+        "BUSINESS": "Pick the 3 most important business and finance stories for someone who wants to understand the economy. Focus on market moves, major company news, and economic policy.",
+        "TECH": "Pick the 3 most important technology stories that affect how people live and work. Focus on AI developments, major product launches, and tech policy.",
+        "SPORTS": "Pick the 3 most relevant sports stories across major leagues. Focus on game results, standings, trades, and major sports events happening now.",
+        "STATE": f"Pick the 3 most important {STATE} stories that directly affect residents. Only include: public safety, infrastructure, economy, crime, policy, weather. Prioritize stories from the last 7 days. Skip anything older than 2 weeks unless it has major ongoing impact today. Skip awards, feel-good stories, and anything that doesn't affect people's daily lives.",
+        "CITY": f"Pick the 3 most important local stories that directly affect residents of {CITY}. Only include: public safety, infrastructure, local economy, crime, policy, weather. Prioritize stories from the last 7 days. Skip anything older than 2 weeks. Skip awards, feel-good stories, and anything that doesn't affect people's daily lives.",
     }
 
     category_queries = {
@@ -344,7 +588,7 @@ def news_stream():
         "TECH":          urllib.parse.quote("technology AI news today"),
         "SPORTS":        urllib.parse.quote("sports news today"),
         "STATE":         urllib.parse.quote(f"{STATE} news"),
-        "CITY":          urllib.parse.quote("Cary NC news"),
+        "CITY":          urllib.parse.quote(f"{CITY} news"),
     }
 
     def generate():
@@ -391,6 +635,53 @@ def news_stream():
             "X-Accel-Buffering": "no"
         }
     )
+
+@app.route("/api/sports")
+def sports_scores():
+    leagues = request.args.get("leagues", "").split(",")
+
+    league_map = {
+        "NBA":  ("basketball", "nba"),
+        "NFL":  ("football",   "nfl"),
+        "MLB":  ("baseball",   "mlb"),
+        "NHL":  ("hockey",     "nhl"),
+        "MLS":  ("soccer",     "usa.1"),
+        "MMA":  ("mma",        "ufc"),
+        "Golf": ("golf",       "pga"),
+        "F1":   ("racing",     "f1"),
+    }
+
+    results = {}
+    for league in leagues:
+        league = league.strip()
+        if league not in league_map:
+            continue
+        sport, slug = league_map[league]
+        try:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{slug}/scoreboard"
+            r = requests.get(url, timeout=10)
+            data = r.json()
+            games = []
+            for event in data.get("events", [])[:6]:
+                comp = event.get("competitions", [{}])[0]
+                teams = comp.get("competitors", [])
+                if len(teams) >= 2:
+                    home = next((t for t in teams if t.get("homeAway") == "home"), teams[0])
+                    away = next((t for t in teams if t.get("homeAway") == "away"), teams[1])
+                    status = event.get("status", {}).get("type", {})
+                    games.append({
+                        "home":       home.get("team", {}).get("shortDisplayName", ""),
+                        "away":       away.get("team", {}).get("shortDisplayName", ""),
+                        "home_score": home.get("score", "-"),
+                        "away_score": away.get("score", "-"),
+                        "status":     status.get("shortDetail", ""),
+                        "live":       status.get("name", "") == "STATUS_IN_PROGRESS",
+                    })
+            results[league] = games
+        except:
+            results[league] = []
+
+    return jsonify(results)
 
 @app.route("/api/stocks")
 def stocks():
@@ -466,7 +757,6 @@ def stocks():
         "losers": losers
     })
 
-
 @app.route("/api/stocks/summaries")
 def stock_summaries():
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -519,7 +809,7 @@ def stock_summaries():
     )
 
     stock_chat = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": summary_prompt}]
     )
 

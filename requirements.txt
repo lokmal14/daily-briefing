@@ -1,12 +1,13 @@
 flask
-gunicorn
 requests
 python-dotenv
-groq
 feedparser
 pytz
 yfinance
+openai
 noaa-sdk
 openmeteo-requests
 requests-cache
 retry-requests
+gunicorn
+beautifulsoup4
